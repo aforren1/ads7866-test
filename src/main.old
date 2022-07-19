@@ -1,0 +1,65 @@
+// work out how the ADS7866 works
+// https://www.ti.com/lit/ds/symlink/ads7866.pdf
+
+/*
+
+ Vin   GND  Vdd/ref
+  |     |     |
+            |
+            | <- ref line
+            |
+  |     |     |
+SCLK   SDO    CS
+
+there should be a decoupling (0.1uF) cap between ref and gnd
+
+SCLK determines conversion rate
+
+on teensy 4.0, pin assignments are:
+CS = 10
+SDO (formerly MOSI) = 11
+SDI (formerly MISO) = 12
+SCK (formerly SCK) = 13
+
+max SCK/SCLK = 3.4MHz (at 3.3V ish)
+MSB first
+CPOL=1, CPHA=1, so SPI_MODE3 in arduino lingo
+
+There are no commands, only clocks.
+To start conversion for a single device, pull CS low.
+There will be four 'low' states from device, then 12 bits (1 clock cycle per bit, MSB to LSB)
+After EOC (end of conversion), device's data line pulled to tri-state
+
+Think about flexio for parallel comms, e.g. https://github.com/TeensyUser/doc/wiki/FLEXIO
+
+Total conversion time only takes 5us, so we can still hit 40khz with 5 inputs
+Rise/fall times are 20us (with 1k resistor at 5v), so faster sampling may not make sense?
+*/
+#include <Arduino.h>
+#include <SPI.h>
+
+constexpr int dev1_pin = 10;
+
+const SPISettings sets(3400000, MSBFIRST, SPI_MODE3);
+
+uint16_t val;
+uint32_t t0, t1;
+
+void setup() {
+  pinMode(dev1_pin, OUTPUT);
+  digitalWriteFast(dev1_pin, HIGH);
+  SPI.begin();
+  SPI.beginTransaction(sets);
+}
+
+void loop() {
+  delay(1);
+  t0 = micros();
+  digitalWriteFast(dev1_pin, LOW);
+  val = SPI.transfer16(0);
+  digitalWriteFast(dev1_pin, HIGH);
+  t1 = micros();
+  Serial.print(val);
+  Serial.print(" ");
+  Serial.println(t1 - t0);
+}
