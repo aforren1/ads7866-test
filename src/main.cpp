@@ -5,6 +5,7 @@ and data pins are connected to GPIO6 (pins 14 & 15, respectively)
 
 #include <Arduino.h>
 #include <SPI.h>
+#include <ResponsiveAnalogRead.h>
 
 // selects both/all ADCs
 constexpr int cs_pin = 10;
@@ -14,7 +15,7 @@ constexpr int d0_pin = 14;
 constexpr int d1_pin = 15;
 
 uint8_t counter = 0;
-constexpr uint16_t n_skip = 20; // read once every 20
+constexpr uint16_t n_skip = 200; // read once every 20
 uint16_t junk = 0;
 uint16_t val0 = 0;
 uint16_t val1 = 0;
@@ -27,8 +28,12 @@ void callback(EventResponderRef er) {
     dma_dun = 1;
 }
 
+ResponsiveAnalogRead an1;
+
 void setup() {
   while (!Serial) {}
+  // TODO: weird, this completely crashes teensy??
+  //an1.begin(1, true);
   callbackHandler.attachImmediate(&callback);
   pinMode(cs_pin, OUTPUT);
   pinMode(clk_pin, INPUT);
@@ -43,15 +48,19 @@ void setup() {
 // taken from answer and comment from leoly
 // https://stackoverflow.com/questions/47981/how-do-i-set-clear-and-toggle-a-single-bit#comment46654671_47990
 inline uint16_t set_bit_at_pos(uint16_t val, uint8_t gpio_val, uint8_t pos) {
-    return val & ~(1 << pos) | (gpio_val << pos);
+    return (val & ~(1 << pos)) | (gpio_val << pos);
 }
 
 elapsedMicros tm;
 uint8_t data[] = {1, 2};
+uint32_t t = 0;
+uint32_t t0 = 0;
+uint32_t dt = 0;
 
 void loop() {
     //Serial.println(counter);
-    tm = 0;
+    //tm = 0;
+
     // start reading
     if (counter == 0) {
         digitalWriteFast(cs_pin, LOW);
@@ -67,6 +76,11 @@ void loop() {
                 // spin until low
                // Serial.println(i);
                 while (digitalReadFast(clk_pin)) {}
+                if (i == 0 && j == 0) {
+                    t = tm;
+                    dt = t - t0;
+                    t0 = t;
+                }
                 // data valid? now read all of GPIO6, and shift out the bits we need
                 register uint32_t data = GPIO6_PSR;
                 uint16_t idx = 15-(i + j*8);
@@ -79,12 +93,12 @@ void loop() {
                     while (!digitalReadFast(clk_pin)) {}
                 }
             }
-            // wait for DMA
-            // while (!dma_dun) {}
-            // dma_dun = 0;
+
         }
-        
         digitalWriteFast(cs_pin, HIGH);
+        // wait for DMA?
+        // while (!dma_dun) {}
+        // dma_dun = 0;
 
     } else if ((counter % 2) == 0) {
         // read every other time, but we're going to ignore the value
@@ -97,17 +111,33 @@ void loop() {
         // - report at 1kHz
         digitalWriteFast(cs_pin, LOW);
         junk = SPI.transfer16(0);
+        // SPI.transfer(data, nullptr, 2, callbackHandler);
+        // an1.update(val0);
         digitalWriteFast(cs_pin, HIGH);
+        // TODO: use ResponsiveAnalogRead to filter out noise during this time?
+    } else {
+        // TODO: why does this work??
+        // half-guesses I haven't thought through:
+        // our "raw" sampling period is 200kHz, so must sleep for
+        // up to 5us == 5000ns to account for the missing interval
+        // however, sending data on the non-skipped times
+        // takes some amount of time, so we need to account
+        // for slop in that process-- otherwise, we'll keep drifting
+        // by however long that takes
+        // this is a magic number for our 1kHz sampling rate
+        delayNanoseconds(4670);
     }
 
     // stop reading
     //Serial.println(tm);
     // send data
     if (counter == 0) {
+        // Serial.print(dt);
+        // Serial.print(" ");
         Serial.print(val0);
         Serial.print(" ");
         Serial.println(val1);
-        Serial.send_now();
+        //Serial.send_now();
     }
     counter += 1;
     counter %= n_skip;
