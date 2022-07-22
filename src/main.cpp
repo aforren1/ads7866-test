@@ -1,6 +1,9 @@
 /*
 Normal SPI, except all ADCs are hooked up to the same chip select
 and data pins are connected to GPIO6 (pins 14 & 15, respectively)
+
+For expanding, can probably find enough pins between GPIO6 and 7
+(need to be more careful about pin selection on 7, b/c it might run into SPI pins?)
 */
 
 #include <Arduino.h>
@@ -37,6 +40,7 @@ void setup() {
   callbackHandler.attachImmediate(&callback);
   pinMode(cs_pin, OUTPUT);
   pinMode(clk_pin, INPUT);
+  pinMode(6, OUTPUT);
   // https://forum.pjrc.com/threads/69274-Reading-Pins-in-Parallel-Teensy-4-1?p=298049
   GPIO6_GDIR &= 0xFFFF; // set all gpio6 pins to input
   digitalWriteFast(cs_pin, HIGH);
@@ -52,7 +56,7 @@ inline uint16_t set_bit_at_pos(uint16_t val, uint8_t gpio_val, uint8_t pos) {
 }
 
 elapsedMicros tm;
-uint8_t data[] = {1, 2};
+uint8_t data[] = {1, 1};
 uint32_t t = 0;
 uint32_t t0 = 0;
 uint32_t dt = 0;
@@ -76,6 +80,7 @@ void loop() {
                 // spin until low
                // Serial.println(i);
                 while (digitalReadFast(clk_pin)) {}
+                digitalWriteFast(6, LOW);
                 if (i == 0 && j == 0) {
                     t = tm;
                     dt = t - t0;
@@ -83,11 +88,13 @@ void loop() {
                 }
                 // data valid? now read all of GPIO6, and shift out the bits we need
                 register uint32_t data = GPIO6_PSR;
+                //register uint32_t d2 = GPIO7_PSR; 
                 uint16_t idx = 15-(i + j*8);
                 // TODO: in "real" version, we should have tx_data allocated
                 // and just directly toggle bits in that? Save some memcpys later
                 val0 = set_bit_at_pos(val0, (data >> 18) & 1U, idx); // pin 14
                 val1 = set_bit_at_pos(val1, (data >> 19) & 1U, idx); // pin 15
+                digitalWriteFast(6, HIGH);
                 // spin until high (unless last iteration)
                 if (!(i == 7 && j == 1)) {
                     while (!digitalReadFast(clk_pin)) {}
@@ -137,7 +144,7 @@ void loop() {
         Serial.print(val0);
         Serial.print(" ");
         Serial.println(val1);
-        //Serial.send_now();
+        Serial.send_now();
     }
     counter += 1;
     counter %= n_skip;
